@@ -27,12 +27,27 @@ html, body, .stApp {
     font-family: 'JetBrains Mono', monospace !important;
 }
 .stButton button {
+    background: #161b22 !important;
+    color: #e6edf3 !important;
+    border: 1px solid #30363d !important;
+    border-radius: 8px !important;
+    font-weight: 500 !important;
+    font-family: 'Space Grotesk', sans-serif !important;
+    transition: all 0.2s !important;
+}
+.stButton button:hover {
+    border-color: #00ff88 !important;
+    color: #00ff88 !important;
+}
+div[data-testid="column"]:nth-child(1) .stButton button { border-color: #00ff88; color: #00ff88; }
+div[data-testid="column"]:nth-child(2) .stButton button { border-color: #58a6ff; color: #58a6ff; }
+div[data-testid="column"]:nth-child(3) .stButton button { border-color: #f78166; color: #f78166; }
+div[data-testid="column"]:nth-child(4) .stButton button { border-color: #ffa657; color: #ffa657; }
+button[kind="secondary"] {
     background: linear-gradient(135deg, #00ff88, #00cc6a) !important;
     color: #0d1117 !important;
     border: none !important;
-    border-radius: 8px !important;
     font-weight: 700 !important;
-    font-family: 'Space Grotesk', sans-serif !important;
 }
 [data-testid="stChatMessage"] {
     background: #161b22 !important;
@@ -73,34 +88,28 @@ def clean_text(text):
 
 def build_model():
     os.makedirs(MODEL_DIR, exist_ok=True)
-
     df = pd.read_csv(DATA_PATH)
     df.columns = ['name','gender','degree','major','interests',
                   'skills','cgpa','has_cert','cert_title','is_working',
                   'job_title','masters']
-
     for col in ['interests','skills','major','job_title']:
         df[col] = df[col].apply(clean_text)
-
     ALL_MAJORS = sorted(df['major'].dropna().unique().tolist())
     ALL_JOBS   = sorted(
         df['job_title'].dropna()[df['job_title'].dropna() != 'na'].unique().tolist()
     )
-
     all_data = {'career': df, 'all_majors': ALL_MAJORS, 'all_jobs': ALL_JOBS}
     with open(PKL_PATH, 'wb') as f:
         pickle.dump(all_data, f)
-
     return all_data
 
 
-# ─── Load Data (build otomatis kalau model belum ada) ─────────────────────────
+# ─── Load Data ────────────────────────────────────────────────────────────────
 @st.cache_resource
 def load_all_data():
     if not os.path.exists(PKL_PATH):
         st.info("⚙️ Mempersiapkan data untuk pertama kali... Tunggu sebentar ya!")
         return build_model()
-
     with open(PKL_PATH, 'rb') as f:
         return pickle.load(f)
 
@@ -116,7 +125,7 @@ except Exception as e:
 HF_TOKEN = os.environ.get('HF_TOKEN', '')
 
 
-# ─── Bangun SYSTEM PROMPT dinamis dari dataset ────────────────────────────────
+# ─── System Prompt dinamis dari dataset ───────────────────────────────────────
 def build_system_prompt():
     majors_str = '\n'.join(f'  - {m}' for m in ALL_MAJORS)
     jobs_str   = '\n'.join(f'  - {j}' for j in ALL_JOBS)
@@ -185,26 +194,29 @@ def cari_rekomendasi(query):
     return job_counts, major_counts
 
 
-# ─── Quick Prompt Suggestions ─────────────────────────────────────────────────
-QUICK_PROMPTS = [
-    ("💻", "#00ff88", "Jurusan apa yang cocok untuk saya?"),
-    ("📊", "#58a6ff", "Prospek kerja Data Scientist"),
-    ("🎨", "#f78166", "Karir dari jurusan Desain UI/UX"),
-    ("🌾", "#ffa657", "Peluang kerja lulusan Agribisnis"),
-]
-
+# ─── Session State ────────────────────────────────────────────────────────────
 if 'messages' not in st.session_state:
     st.session_state.messages = []
 
+if 'quick_prompt' not in st.session_state:
+    st.session_state.quick_prompt = None
+
+
+# ─── Quick Prompt Buttons (hanya tampil kalau belum ada chat) ─────────────────
+QUICK_PROMPTS = [
+    ("💻", "Jurusan apa yang cocok untuk saya?"),
+    ("📊", "Prospek kerja Data Scientist"),
+    ("🎨", "Karir dari jurusan Desain UI/UX"),
+    ("🌾", "Peluang kerja lulusan Agribisnis"),
+]
+
 if len(st.session_state.messages) == 0:
-    buttons_html = "<div style='display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-bottom:1.5rem;'>"
-    for icon, color, label in QUICK_PROMPTS:
-        buttons_html += (
-            f"<div style='background:#161b22;border:1px solid {color};padding:8px 16px;"
-            f"border-radius:6px;font-size:0.82rem;color:{color};'>{icon} {label}</div>"
-        )
-    buttons_html += "</div>"
-    st.markdown(buttons_html, unsafe_allow_html=True)
+    cols = st.columns(2)
+    for i, (icon, label) in enumerate(QUICK_PROMPTS):
+        with cols[i % 2]:
+            if st.button(f"{icon} {label}", key=f"qp_{i}", use_container_width=True):
+                st.session_state.quick_prompt = label
+                st.rerun()
 
 
 # ─── Chat History ─────────────────────────────────────────────────────────────
@@ -214,7 +226,14 @@ for msg in st.session_state.messages:
 
 
 # ─── Input & Response ─────────────────────────────────────────────────────────
-if prompt := st.chat_input("Tanya soal jurusan, karir, atau prospek kerja..."):
+# Ambil dari quick prompt kalau ada, atau dari chat input
+if st.session_state.quick_prompt:
+    prompt = st.session_state.quick_prompt
+    st.session_state.quick_prompt = None
+else:
+    prompt = st.chat_input("Tanya soal jurusan, karir, atau prospek kerja...")
+
+if prompt:
     st.session_state.messages.append({'role': 'user', 'content': prompt})
     with st.chat_message('user'):
         st.markdown(prompt)
@@ -239,9 +258,12 @@ if prompt := st.chat_input("Tanya soal jurusan, karir, atau prospek kerja..."):
             st.markdown(full_reply, unsafe_allow_html=True)
             st.session_state.messages.append({'role': 'assistant', 'content': full_reply})
 
+    st.rerun()
+
 
 # ─── Reset Button ─────────────────────────────────────────────────────────────
 if st.session_state.messages:
-    if st.button("🗑️ Reset Chat"):
+    if st.button("🗑️ Reset Chat", type="secondary"):
         st.session_state.messages = []
+        st.session_state.quick_prompt = None
         st.rerun()
