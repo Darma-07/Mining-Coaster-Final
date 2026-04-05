@@ -1,212 +1,3 @@
-# ╔══════════════════════════════════════════════════════════════╗
-# ║  CELL 1 — Install semua library yang dibutuhkan              ║
-# ╚══════════════════════════════════════════════════════════════╝
-
-!pip install streamlit sentence-transformers faiss-cpu pyngrok huggingface_hub plotly pandas numpy -q
-print("✅ Semua library berhasil diinstall!")
-
-
-# ╔══════════════════════════════════════════════════════════════╗
-# ║  CELL 2 — Mount Google Drive                                 ║
-# ╚══════════════════════════════════════════════════════════════╝
-
-from google.colab import drive
-drive.mount('/content/drive')
-
-import os
-PROJECT_DIR = '/content/drive/MyDrive/it-career-chatbot-final'
-os.makedirs(f'{PROJECT_DIR}/data', exist_ok=True)
-os.makedirs(f'{PROJECT_DIR}/models', exist_ok=True)
-print(f'✅ Folder siap di Google Drive!')
-print(f'📁 {PROJECT_DIR}')
-
-
-# ╔══════════════════════════════════════════════════════════════╗
-# ║  CELL 3 — Upload data CSV                                    ║
-# ╚══════════════════════════════════════════════════════════════╝
-
-from google.colab import files
-import shutil, os
-
-PROJECT_DIR = '/content/drive/MyDrive/it-career-chatbot-final'
-
-print('📤 Upload file: career_recommendation_final.csv')
-uploaded = files.upload()
-
-for filename in uploaded.keys():
-    dest = f'{PROJECT_DIR}/data/{filename}' if filename.endswith('.csv') else f'{PROJECT_DIR}/{filename}'
-    shutil.move(filename, dest)
-    print(f'✅ {filename} → tersimpan!')
-
-print('\n📁 File di folder data:')
-for f in os.listdir(f'{PROJECT_DIR}/data'):
-    print(f'   ✓ {f}')
-
-
-# ╔══════════════════════════════════════════════════════════════╗
-# ║  CELL 4 — Preprocessing Data                                 ║
-# ╚══════════════════════════════════════════════════════════════╝
-
-import pandas as pd
-import numpy as np
-import re
-import pickle
-import os
-
-PROJECT_DIR = '/content/drive/MyDrive/it-career-chatbot-final'
-DATA_DIR    = f'{PROJECT_DIR}/data'
-MODEL_DIR   = f'{PROJECT_DIR}/models'
-
-def clean_text(text):
-    if not isinstance(text, str): return ''
-    return re.sub(r'\s+', ' ', text.strip()).lower()
-
-# Load dataset baru
-df = pd.read_csv(f'{DATA_DIR}/career_recommendation_final.csv')
-
-# Rename kolom
-df.columns = ['name','gender','degree','major','interests',
-              'skills','cgpa','has_cert','cert_title','is_working',
-              'job_title','masters']
-
-# Bersihkan kolom penting
-for col in ['interests','skills','major','job_title']:
-    df[col] = df[col].apply(clean_text)
-
-# Ambil daftar jurusan & job unik langsung dari dataset (dinamis)
-ALL_MAJORS = sorted(df['major'].dropna().unique().tolist())
-ALL_JOBS   = sorted(
-    df['job_title'].dropna()[df['job_title'].dropna() != 'na'].unique().tolist()
-)
-
-# Simpan ke pickle
-all_data = {
-    'career'    : df,
-    'all_majors': ALL_MAJORS,
-    'all_jobs'  : ALL_JOBS,
-}
-with open(f'{MODEL_DIR}/all_data.pkl', 'wb') as f:
-    pickle.dump(all_data, f)
-
-print('✅ PREPROCESSING SELESAI!')
-print(f'   📊 Total data         : {len(df):,} entri')
-print(f'   🎓 Jurusan unik       : {len(ALL_MAJORS)}')
-print(f'   💼 Job title unik     : {len(ALL_JOBS)}')
-print()
-print('Jurusan yang terdaftar:')
-for m in ALL_MAJORS:
-    print(f'  - {m}')
-
-
-# ╔══════════════════════════════════════════════════════════════╗
-# ║  CELL 5 — Build FAISS Index                                  ║
-# ╚══════════════════════════════════════════════════════════════╝
-
-from sentence_transformers import SentenceTransformer
-import faiss
-import numpy as np
-import pickle
-import os
-
-PROJECT_DIR = '/content/drive/MyDrive/it-career-chatbot-final'
-MODEL_DIR   = f'{PROJECT_DIR}/models'
-
-with open(f'{MODEL_DIR}/all_data.pkl', 'rb') as f:
-    all_data = pickle.load(f)
-
-df = all_data['career']
-
-print('⚙️  Loading embedding model...')
-embed_model = SentenceTransformer('all-MiniLM-L6-v2')
-print('✅ Model loaded!')
-
-print('⚙️  Building FAISS index...')
-texts      = (df['interests'] + ' ' + df['skills']).tolist()
-embeddings = embed_model.encode(texts, show_progress_bar=True, batch_size=64)
-embeddings = np.array(embeddings).astype('float32')
-faiss.normalize_L2(embeddings)
-
-index = faiss.IndexFlatIP(embeddings.shape[1])
-index.add(embeddings)
-
-faiss.write_index(index, f'{MODEL_DIR}/faiss_index.index')
-embed_model.save(f'{MODEL_DIR}/embed_model')
-
-print(f'✅ FAISS index selesai!')
-print(f'   🧠 Total vectors : {index.ntotal:,}')
-print(f'   💾 Tersimpan di  : {MODEL_DIR}')
-
-
-# ╔══════════════════════════════════════════════════════════════╗
-# ║  CELL 6 — Tulis app.py ke Google Drive                       ║
-# ╚══════════════════════════════════════════════════════════════╝
-
-# ╔══════════════════════════════════════════════════════════════╗
-# ║  CELL 7 — Buat & Download requirements.txt                   ║
-# ╚══════════════════════════════════════════════════════════════╝
-
-from google.colab import files
-
-PROJECT_DIR = '/content/drive/MyDrive/it-career-chatbot-final'
-
-req = """streamlit
-sentence-transformers
-faiss-cpu
-huggingface_hub
-pandas
-numpy
-plotly"""
-
-req_path = f'{PROJECT_DIR}/requirements.txt'
-
-with open(req_path, 'w') as f:
-    f.write(req)
-
-print('✅ requirements.txt siap!')
-files.download(req_path)
-print('⬇️  Download dimulai...')
-
-
-# ╔══════════════════════════════════════════════════════════════╗
-# ║  CELL 8 — Jalankan Streamlit + Ngrok                         ║
-# ╚══════════════════════════════════════════════════════════════╝
-
-import os
-import subprocess
-import time
-from pyngrok import ngrok
-
-# Matikan dulu yang lama
-subprocess.run(['pkill', '-f', 'streamlit'], capture_output=True)
-time.sleep(2)
-
-HF_TOKEN    = '...'   # ← isi token Hugging Face kamu
-NGROK_TOKEN = '...'   # ← isi token Ngrok kamu
-
-os.environ['HF_TOKEN'] = HF_TOKEN
-PROJECT_DIR = '/content/drive/MyDrive/it-career-chatbot-final'
-
-ngrok.set_auth_token(NGROK_TOKEN)
-
-subprocess.Popen([
-    'streamlit', 'run', f'{PROJECT_DIR}/app.py',
-    '--server.port', '8501',
-    '--server.headless', 'true'
-])
-
-time.sleep(5)
-
-public_url = ngrok.connect(8501)
-print('=' * 50)
-print('✅ Career Guide BERHASIL DIJALANKAN!')
-print(f'🔗 Buka link ini: {public_url.public_url}')
-print('=' * 50)
-
-import os
-
-PROJECT_DIR = '/content/drive/MyDrive/it-career-chatbot-final'
-
-app_code = r'''
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -270,12 +61,47 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-# ─── Load Data ────────────────────────────────────────────────────────────────
+# ─── Auto-build model jika belum ada ─────────────────────────────────────────
+BASE_DIR  = os.path.dirname(os.path.abspath(__file__))
+MODEL_DIR = os.path.join(BASE_DIR, 'models')
+DATA_PATH = os.path.join(BASE_DIR, 'data', 'career_recommendation_final.csv')
+PKL_PATH  = os.path.join(MODEL_DIR, 'all_data.pkl')
+
+def clean_text(text):
+    if not isinstance(text, str): return ''
+    return re.sub(r'\s+', ' ', text.strip()).lower()
+
+def build_model():
+    os.makedirs(MODEL_DIR, exist_ok=True)
+
+    df = pd.read_csv(DATA_PATH)
+    df.columns = ['name','gender','degree','major','interests',
+                  'skills','cgpa','has_cert','cert_title','is_working',
+                  'job_title','masters']
+
+    for col in ['interests','skills','major','job_title']:
+        df[col] = df[col].apply(clean_text)
+
+    ALL_MAJORS = sorted(df['major'].dropna().unique().tolist())
+    ALL_JOBS   = sorted(
+        df['job_title'].dropna()[df['job_title'].dropna() != 'na'].unique().tolist()
+    )
+
+    all_data = {'career': df, 'all_majors': ALL_MAJORS, 'all_jobs': ALL_JOBS}
+    with open(PKL_PATH, 'wb') as f:
+        pickle.dump(all_data, f)
+
+    return all_data
+
+
+# ─── Load Data (build otomatis kalau model belum ada) ─────────────────────────
 @st.cache_resource
 def load_all_data():
-    base      = os.path.dirname(os.path.abspath(__file__))
-    model_dir = os.path.join(base, 'models')
-    with open(os.path.join(model_dir, 'all_data.pkl'), 'rb') as f:
+    if not os.path.exists(PKL_PATH):
+        st.info("⚙️ Mempersiapkan data untuk pertama kali... Tunggu sebentar ya!")
+        return build_model()
+
+    with open(PKL_PATH, 'rb') as f:
         return pickle.load(f)
 
 try:
@@ -419,10 +245,3 @@ if st.session_state.messages:
     if st.button("🗑️ Reset Chat"):
         st.session_state.messages = []
         st.rerun()
-'''
-
-with open(f'{PROJECT_DIR}/app.py', 'w', encoding='utf-8') as f:
-    f.write(app_code.lstrip())
-
-print('✅ app.py berhasil dibuat!')
-print(f'📁 Lokasi: {PROJECT_DIR}/app.py')
