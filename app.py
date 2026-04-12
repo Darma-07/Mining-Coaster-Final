@@ -87,17 +87,43 @@ def clean_text(text):
     return re.sub(r'\s+', ' ', text.strip()).lower()
 
 def build_model():
+    """Preprocessing ringan untuk deploy — konsisten dengan preprocessing baru."""
     os.makedirs(MODEL_DIR, exist_ok=True)
     df = pd.read_csv(DATA_PATH)
-    df.columns = ['name','gender','degree','major','interests',
-                  'skills','cgpa','has_cert','cert_title','is_working',
-                  'job_title','masters']
-    for col in ['interests','skills','major','job_title']:
-        df[col] = df[col].apply(clean_text)
-    ALL_MAJORS = sorted(df['major'].dropna().unique().tolist())
+
+    # Rename kolom panjang → singkat (sama dengan preprocessing Colab)
+    df.columns = df.columns.str.strip()
+    df = df.rename(columns={
+        "What is your name?"                                                                                  : "name",
+        "What is your gender?"                                                                                : "gender",
+        "What was your course in UG?"                                                                         : "ug_course",
+        "What is your UG specialization? Major Subject (Eg; Mathematics)"                                    : "ug_major",
+        "What are your interests?"                                                                            : "interests",
+        "What are your skills ? (Select multiple if necessary)"                                               : "skills",
+        "What was the average CGPA or Percentage obtained in under graduation?"                               : "cgpa",
+        "Did you do any certification courses additionally?"                                                  : "certification",
+        "If yes, please specify your certificate course title."                                               : "cert_title",
+        "Are you working?"                                                                                    : "working",
+        "If yes, then what is/was your first Job title in your current field of work? If not applicable, write NA." : "job_title",
+        "Have you done masters after undergraduation? If yes, mention your field of masters.(Eg; Masters in Mathematics)" : "masters",
+    })
+
+    # Fallback: jika kolom sudah pendek
+    if len(df.columns) == 12 and "ug_course" not in df.columns:
+        df.columns = ['name','gender','ug_course','ug_major','interests',
+                      'skills','cgpa','certification','cert_title','working',
+                      'job_title','masters']
+
+    # Bersihkan kolom penting
+    for col in ['interests','skills','ug_major','job_title']:
+        if col in df.columns:
+            df[col] = df[col].apply(clean_text)
+
+    ALL_MAJORS = sorted(df['ug_major'].dropna().unique().tolist())
     ALL_JOBS   = sorted(
         df['job_title'].dropna()[df['job_title'].dropna() != 'na'].unique().tolist()
     )
+
     all_data = {'career': df, 'all_majors': ALL_MAJORS, 'all_jobs': ALL_JOBS}
     with open(PKL_PATH, 'wb') as f:
         pickle.dump(all_data, f)
@@ -121,6 +147,9 @@ try:
 except Exception as e:
     st.error(f"❌ Error loading data: {e}")
     st.stop()
+
+# Deteksi nama kolom major (kompatibel dengan pickle lama & baru)
+MAJOR_COL = 'ug_major' if 'ug_major' in df.columns else 'major'
 
 HF_TOKEN = os.environ.get('HF_TOKEN', '')
 
@@ -185,12 +214,12 @@ def cari_rekomendasi(query):
     hasil = df[
         df['interests'].str.contains(q, na=False) |
         df['skills'].str.contains(q, na=False)    |
-        df['major'].str.contains(q, na=False)
+        df[MAJOR_COL].str.contains(q, na=False)
     ]
     if len(hasil) == 0:
         return None, None
     job_counts   = hasil['job_title'].value_counts().head(5)
-    major_counts = hasil['major'].value_counts().head(5)
+    major_counts = hasil[MAJOR_COL].value_counts().head(5)
     return job_counts, major_counts
 
 
@@ -226,7 +255,6 @@ for msg in st.session_state.messages:
 
 
 # ─── Input & Response ─────────────────────────────────────────────────────────
-# Ambil dari quick prompt kalau ada, atau dari chat input
 if st.session_state.quick_prompt:
     prompt = st.session_state.quick_prompt
     st.session_state.quick_prompt = None
